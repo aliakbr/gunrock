@@ -18,8 +18,7 @@
 
 namespace gunrock {
 namespace app {
-// TODO: change the name space
-namespace Template {
+namespace SSSP_Test {
 
 /**
  * @brief Speciflying parameters for SSSP Problem
@@ -49,8 +48,8 @@ cudaError_t UseParameters_problem(
  */
 template <
     typename _GraphT,
-    // TODO: Add problem specific template parameters here, e.g.:
-    // typename _ValueT = typename _GraphT::ValueT,
+    typename _ValueT = typename _GraphT::ValueT,
+    typename _LabelT = typename _GraphT::LabelT,
     ProblemFlag _FLAG = Problem_None>
 struct Problem : ProblemBase<_GraphT, _FLAG>
 {
@@ -73,7 +72,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
      */
     struct DataSlice : BaseDataSlice
     {
-        // TODO: add problem specific storage arrays, for example:
         util::Array1D<SizeT, ValueT>   distances ; // distances from source
         util::Array1D<SizeT, LabelT>   labels    ; // labels to mark latest iterattion
         util::Array1D<SizeT, VertexT>  preds     ; // predecessors of vertices
@@ -85,8 +83,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
          */
         DataSlice() : BaseDataSlice()
         {
-            // TODO: Set names of the problem specific arrays, for example:
-            // distances         .SetName("distances"           );
             distances         .SetName("distances"             );
             labels            .SetName("labels"                );
             preds             .SetName("preds"                 );
@@ -112,7 +108,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
             if (target & util::DEVICE)
                 GUARD_CU(util::SetDevice(this->gpu_idx));
 
-            // TODO: Release problem specific data, e.g.:
             GUARD_CU(distances      .Release(target));
             GUARD_CU(labels         .Release(target));
             GUARD_CU(preds          .Release(target));
@@ -139,17 +134,15 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
 
             GUARD_CU(BaseDataSlice::Init(sub_graph, num_gpus, gpu_idx, target, flag));
 
-            // TODO: allocate problem specific data here, e.g.:
             GUARD_CU(distances .Allocate(sub_graph.nodes, target));
             GUARD_CU(labels    .Allocate(sub_graph.nodes, target));
-            if (this->flag && Mark_Predecessors){
+            if (this->flag & Mark_Predecessors){
               GUARD_CU(temp_preds.Allocate(sub_graph.nodes, target));
               GUARD_CU(preds     .Allocate(sub_graph.nodes, target));
             }
 
             if (target & util::DEVICE)
             {
-                // TODO: move sub-graph used by the problem onto GPU, e.g.:
                 GUARD_CU(sub_graph.CsrT::Move(util::HOST, target, this -> stream));
             }
             return retval;
@@ -166,7 +159,6 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
             SizeT nodes = this -> sub_graph -> nodes;
 
             // Ensure data are allocated
-            // TODO: ensure size of problem specific data, e.g.:
             GUARD_CU(distances    .EnsureSize_(nodes, target));
             GUARD_CU(labels       .EnsureSize_(nodes, target));
             if (this->flag && Mark_Predecessors){
@@ -175,13 +167,27 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
             }
 
             // Reset data
-            // TODO: reset problem specific data, e.g.:
+            GUARD_CU(labels.ForEach([]__host__ __device__
+            (LabelT &label){
+              label = util::PreDefinedValues<LabelT>::InvalidValue;
+            }, node, target, this->stream));
+
             GUARD_CU(distances.ForEach([]__host__ __device__
             (ValueT &distance){
                distance = util::PreDefinedValues<ValueT>::MaxValue;
             }, nodes, target, this -> stream));
 
-            GUARD_CU(labels.ForEach)
+            if (this->flag & Mark_Predecessors){
+              GUARD_CU(preds.ForAll([]__host__ __device__
+              (VertexT *preds_, const SizeT &pos){
+                preds_[pos] = pos;
+              }, nodes, target, this->stream));
+
+              GUARD_CU(temp_preds.ForAll([]__host__ __device__
+              (Vertext *temp_preds_, const SizeT &pos){
+                temp_preds_[pos] = pos;
+              }, nodes, target, this->stream));
+            }
 
             return retval;
         }
@@ -244,8 +250,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
      * \return     cudaError_t Error message(s), if any
      */
     cudaError_t Extract(
-        // TODO: add list of results to extract, e.g.:
-        // ValueT         *h_distances,
+        ValueT         *h_distances,
+        VertexT        *h_preds     = NULL,
         util::Location  target      = util::DEVICE)
     {
         cudaError_t retval = cudaSuccess;
@@ -256,31 +262,28 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
             auto &data_slice = data_slices[0][0];
 
             // Set device
-            if (target == util::DEVICE)
+            if (target & target == util::DEVICE)
             {
                 GUARD_CU(util::SetDevice(this->gpu_idx[0]));
 
-                // TODO: extract the results from single GPU, e.g.:
-                // GUARD_CU(data_slice.distances.SetPointer(
-                //    h_distances, nodes, util::HOST));
-                // GUARD_CU(data_slice.distances.Move(util::DEVICE, util::HOST));
-            }
-            else if (target == util::HOST)
-            {
-                // TODO: extract the results from single CPU, e.g.:
-                // GUARD_CU(data_slice.distances.ForEach(h_distances,
-                //    []__host__ __device__
-                //    (const ValueT &distance, ValueT &h_distance){
-                //        h_distance = distance;
-                //    }, nodes, util::HOST));
+                GUARD_CU(data_slice.distances.SetPointer(
+                   h_distances, nodes, util::HOST));
+                GUARD_CU(data_slice.distances.Move(util::DEVICE, util::HOST));
+                if (this->flag & Mark_Predecessors){
+                  return retval;
+                }
+                GUARD_CU(data_slice.preds.SetPointer(h_preds, nodes, util::HOST));
+                GUARD_CU(data_slice.preds.Move(util::DEVICE, util::HOST));
             }
         }
         else
         { // num_gpus != 1
-            // TODO: extract the results from multiple GPUs, e.g.:
-            // util::Array1D<SizeT, ValueT *> th_distances;
-            // th_distances.SetName("bfs::Problem::Extract::th_distances");
-            // GUARD_CU(th_distances.Allocate(this->num_gpus, util::HOST));
+            util::Array1D<SizeT, ValueT *> th_distances;
+            util::Array1D<SizeT, VertexT *> th_preds;
+            th_distances.SetName("SSSP_Test::Problem::Extract::th_distances");
+            th_preds.SetName("SSSP_Test::Problem::Extract::th_preds");
+            GUARD_CU(th_distances.Allocate(this->num_gpus, util::HOST));
+            GUARD_CU(th_preds.Allocate(this->num_gpus, util::HOST));
 
             for (int gpu = 0; gpu < this->num_gpus; gpu++)
             {
@@ -288,9 +291,13 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
                 if (target == util::DEVICE)
                 {
                     GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-                    // GUARD_CU(data_slice.distances.Move(util::DEVICE, util::HOST));
+                    GUARD_CU(data_slice.distances.Move(util::DEVICE, util::HOST));
+                    if (this->flag & Mark_Predecessors){
+                      GUARD_CU(data_slice.preds.Move(util::DEVICE, util::HOST));
+                    }
                 }
-                // th_distances[gpu] = data_slice.distances.GetPointer(util::HOST);
+                th_distances[gpu] = data_slice.distances.GetPointer(util::HOST);
+                th_preds[gpu] = data_slice.preds.GetPointer(util::HOST);
             } //end for(gpu)
 
             for (VertexT v = 0; v < nodes; v++)
@@ -300,10 +307,10 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
                 if ((GraphT::FLAG & gunrock::partitioner::Keep_Node_Num) != 0)
                     v_ = this -> org_graph -> GpT::convertion_table[v];
 
-                // h_distances[v] = th_distances[gpu][v_];
+                h_distances[v] = th_distances[gpu][v_];
             }
 
-            // GUARD_CU(th_distances.Release());
+            GUARD_CU(th_distances.Release());
         } //end if
 
         return retval;
@@ -323,9 +330,8 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
         GUARD_CU(BaseProblem::Init(graph, target));
         data_slices = new util::Array1D<SizeT, DataSlice>[this->num_gpus];
 
-        // TODO get problem specific flags from parameters, e.g.:
-        // if (this -> parameters.template Get<bool>("mark-pred"))
-        //    this -> flag = this -> flag | Mark_Predecessors;
+        if (this -> parameters.template Get<bool>("mark-pred"))
+           this -> flag = this -> flag | Mark_Predecessors;
 
         for (int gpu = 0; gpu < this->num_gpus; gpu++)
         {
@@ -350,8 +356,7 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
      * \return cudaError_t Error message(s), if any
      */
     cudaError_t Reset(
-        // TODO: add problem specific info, e.g.:
-        // VertexT    src,
+        VertexT    src,
         util::Location target = util::DEVICE)
     {
         cudaError_t retval = cudaSuccess;
@@ -365,39 +370,52 @@ struct Problem : ProblemBase<_GraphT, _FLAG>
             GUARD_CU(data_slices[gpu].Move(util::HOST, target));
         }
 
-        // TODO: Initial problem specific starting point, e.g.:
-        // int gpu;
-        // VertexT src_;
-        // if (this->num_gpus <= 1)
-        // {
-        //    gpu = 0; src_=src;
-        // } else {
-        //    gpu = this -> org_graph -> partition_table[src];
-        //    if (this -> flag & partitioner::Keep_Node_Num)
-        //        src_ = src;
-        //    else
-        //        src_ = this -> org_graph -> GpT::convertion_table[src];
-        // }
-        // GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
-        // GUARD_CU2(cudaDeviceSynchronize(),
-        //    "cudaDeviceSynchronize failed");
-        //
-        // ValueT src_distance = 0;
-        // if (target & util::HOST)
-        // {
-        //     data_slices[gpu] -> distances[src_] = src_distance;
-        // }
-        // if (target & util::DEVICE)
-        // {
-        //    GUARD_CU2(cudaMemcpy(
-        //        data_slices[gpu]->distances.GetPointer(util::DEVICE) + src_,
-        //        &src_distance, sizeof(ValueT),
-        //        cudaMemcpyHostToDevice),
-        //        "SSSPProblem cudaMemcpy distances failed");
-        // }
-
+        int gpu;
+        VertexT src_;
+        if (this->num_gpus <= 1)
+        {
+           gpu = 0; src_=src;
+        } else {
+           gpu = this -> org_graph -> partition_table[src];
+           if (this -> flag & partitioner::Keep_Node_Num)
+               src_ = src;
+           else
+               src_ = this -> org_graph -> GpT::convertion_table[src];
+        }
+        GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
         GUARD_CU2(cudaDeviceSynchronize(),
-            "cudaDeviceSynchronize failed");
+           "cudaDeviceSynchronize failed");
+
+        ValueT src_distance = 0;
+        if (target & util::HOST)
+        {
+            data_slices[gpu] -> distances[src_] = src_distance;
+        }
+        if (target & util::DEVICE)
+        {
+           GUARD_CU(util::SetDevice(this->gpu_idx[gpu]));
+           GUARD_CU2(cudaDeviceSynchronize(),
+               "cudaDeviceSynchronize failed");
+        }
+
+        GUARD_CU(data_slices[gpu]->distances.ForAll(
+          [src_] __host__ __device__ (ValueT *distances_, const SizeT &pos)
+          {
+            distances_[src_] = 0;
+          }, 1, target));
+
+        if (this -> flag & Mark_Predecessors){
+          GUARD_CU(data_slices[gpu]->preds.ForAll(
+            [src_] __host__ __device__ (VertexT *preds_, const SizeT &pos)
+            {
+              preds_[src_] = util::PreDefinedValues<VertexT>::InvalidValue;
+            }, 1, target));
+        }
+        if (target & util::DEVICE)
+        {
+           GUARD_CU2(cudaDeviceSynchronize(),
+               "cudaDeviceSynchronize failed");
+        }
         return retval;
     }
 
